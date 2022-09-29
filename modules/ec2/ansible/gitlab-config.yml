@@ -1,0 +1,155 @@
+--- 
+- name: Configure GitLab Runner
+  hosts: 'localhost'
+  any_errors_fatal: true
+  become: yes
+  become_method: sudo
+  tasks:
+    - name: Test Docker Machine 
+      shell: docker-machine create --driver amazonec2 --amazonec2-region us-east-2 --amazonec2-security-group test-runners test-machine; docker-machine rm -y test-machine
+      ignore_errors: yes
+      
+    - name: Configure concurrent
+      ansible.builtin.lineinfile:
+        path: /etc/gitlab-runner/config.toml
+        regexp: '^concurrent'
+        line: concurrent = 13
+    
+    - name: Configre limit
+      ansible.builtin.lineinfile:
+        path: /etc/gitlab-runner/config.toml
+        line: '  limit = 13'
+        insertafter: '^\[\[runners\]\]'
+
+    - name: Remove AWS cache configurations
+      ansible.builtin.lineinfile:
+        path: /etc/gitlab-runner/config.toml
+        state: absent
+        regexp: '^    \[runners.cache.s3\]'
+
+    - name: Remove gcs cache configurations
+      ansible.builtin.lineinfile:
+        path: /etc/gitlab-runner/config.toml
+        state: absent
+        regexp: '^    \[runners.cache.gcs\]'
+
+    - name: Remove Azure cache configurations
+      ansible.builtin.lineinfile:
+        path: /etc/gitlab-runner/config.toml
+        state: absent
+        regexp: '^    \[runners.cache.azure\]'
+
+    - name: Configure S3 cache
+      ansible.builtin.lineinfile:
+        path: /etc/gitlab-runner/config.toml
+        line: "{{ item.line }}"
+        insertafter: '^  \[runners.cache\]'
+      loop:
+        - { line: '      BucketLocation = "us-east-2"' }
+        - { line: '      BucketName = "livelo-gitlab-runners-cache-android"' }
+        - { line: '      ServerAddress = "s3.amazonaws.com"' }
+        - { line: '    [runners.cache.s3]' }
+        - { line: '    Shared = true' }
+        - { line: '    Type = "s3"' }
+
+    - name: Disable local cache
+      ansible.builtin.lineinfile:
+        path: /etc/gitlab-runner/config.toml
+        regexp: '^    disable_cache = false'
+        line: '    disable_cache = true'
+
+    - name: Remove volumes
+      ansible.builtin.lineinfile:
+        path: /etc/gitlab-runner/config.toml
+        state: absent
+        regexp: '^    volumes = \["\/cache"\]'
+
+    - name: Start container with privileged mode
+      ansible.builtin.lineinfile:
+        path: /etc/gitlab-runner/config.toml
+        regexp: '^    privileged = false'
+        line: '    privileged = true'
+
+    - name: Configure Idle count
+      ansible.builtin.lineinfile:
+        path: /etc/gitlab-runner/config.toml
+        regexp: '^    IdleCount = 0'
+        line: '    IdleCount = 2'
+
+    - name: Configure IdleTime = 300
+      ansible.builtin.lineinfile:
+        path: /etc/gitlab-runner/config.toml
+        line: '    IdleTime = 300'
+        insertafter: '^    IdleCount = 2'
+
+    - name: Remove IdleScaleFactor conf
+      ansible.builtin.lineinfile:
+        path: /etc/gitlab-runner/config.toml
+        state: absent
+        regexp: '^    IdleScaleFactor = 0.0'
+
+    - name: Remove IdleCountMin conf
+      ansible.builtin.lineinfile:
+        path: /etc/gitlab-runner/config.toml
+        state: absent
+        regexp: '^    IdleCountMin = 0'
+
+    - name: Configure machine driver
+      ansible.builtin.lineinfile:
+        path: /etc/gitlab-runner/config.toml
+        regexp: '^    MachineDriver = ""'
+        line: '    MachineDriver = "amazonec2"'
+
+    - name: Configure machine name conf
+      ansible.builtin.lineinfile:
+        path: /etc/gitlab-runner/config.toml
+        regexp: '^    MachineName = ""'
+        line: '    MachineName = "gitlab-runners-%s"'
+
+    - name: Configure machine
+      ansible.builtin.blockinfile:
+        path: /etc/gitlab-runner/config.toml
+        insertafter: '^    MachineName'
+        block: |
+          # Machine Options
+              MachineOptions = [
+                "amazonec2-ami={{ AMI }}",
+                "amazonec2-root-size=40",
+                "amazonec2-region=us-east-2",
+                "amazonec2-zone=c",
+                "amazonec2-vpc-id={{ VPC_ID }}",
+                "amazonec2-subnet-id={{ SUBNET_ID }}",
+                "amazonec2-use-private-address=true",
+                #"amazonec2-iam-instance-profile={{ IAM_PROFILE }}",
+                "amazonec2-security-group=gitlab-runners",
+                "amazonec2-instance-type=c5.2xlarge",
+                "amazonec2-request-spot-instance=true",
+                "amazonec2-spot-price=0.20",
+              ]
+              OffPeakTimezone = ""
+              OffPeakIdleCount = 0
+              OffPeakIdleTime = 0
+
+    - name: Remove comments - Ansible begin block
+      ansible.builtin.lineinfile:
+        path: /etc/gitlab-runner/config.toml
+        state: absent
+        regexp: '^# BEGIN ANSIBLE MANAGED BLOCK'
+
+    - name: Remove comments - Ansible end block
+      ansible.builtin.lineinfile:
+        path: /etc/gitlab-runner/config.toml
+        state: absent
+        regexp: '^# END ANSIBLE MANAGED BLOCK'
+
+    - name: Remove comments - machine options
+      ansible.builtin.lineinfile:
+        path: /etc/gitlab-runner/config.toml
+        state: absent
+        regexp: '^# Machine Options'
+
+    - name: Restart service gitlab-runner
+      ansible.builtin.service:
+        name: gitlab-runner
+        state: restarted
+...
